@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FileDrop v2 — P2P Transfer</title>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0e0e10;--surface:#18181c;--surface2:#222228;--surface3:#2a2a32;
+  --border:rgba(255,255,255,0.08);--border2:rgba(255,255,255,0.15);
+  --text:#f0f0f2;--muted:#888892;
+  --accent:#00e5a0;--accent-dim:rgba(0,229,160,0.12);--accent-glow:rgba(0,229,160,0.25);
+  --danger:#ff5c6a;--warn:#ffb547;--info:#5b9cf6;
+  --mono:'Space Mono',monospace;--sans:'DM Sans',sans-serif;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:2rem 1rem 4rem}
+header{text-align:center;margin-bottom:2.5rem}
+.logo{font-family:var(--mono);font-size:2rem;font-weight:700;letter-spacing:-1px;color:var(--accent)}
+.logo span{color:var(--text)}
+.tagline{font-size:0.8rem;color:var(--muted);margin-top:0.4rem;letter-spacing:0.08em;text-transform:uppercase}
+.app{width:100%;max-width:900px;display:grid;grid-template-columns:1fr 340px;gap:1.25rem;align-items:start}
+.left{display:flex;flex-direction:column;gap:1.25rem}
+.right{display:flex;flex-direction:column;gap:1.25rem}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:1.5rem}
+.card-label{font-family:var(--mono);font-size:0.68rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:1rem}
+.id-box{display:flex;align-items:center;gap:0.75rem;background:var(--surface2);border:1px solid var(--border2);border-radius:10px;padding:0.75rem 1rem}
+.id-value{font-family:var(--mono);font-size:1rem;font-weight:700;color:var(--accent);flex:1;letter-spacing:0.05em}
+.id-value.loading{color:var(--muted);font-size:0.85rem;font-weight:400;animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.btn{font-family:var(--sans);font-size:0.82rem;font-weight:500;padding:0.45rem 0.9rem;border-radius:8px;border:1px solid var(--border2);background:transparent;color:var(--text);cursor:pointer;transition:all 0.15s;white-space:nowrap}
+.btn:hover{background:var(--surface2);border-color:var(--accent);color:var(--accent)}
+.btn:active{transform:scale(0.97)}
+.btn-primary{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600}
+.btn-primary:hover{background:#00ffb3;border-color:#00ffb3;color:#000}
+.btn-primary:disabled{background:var(--surface2);color:var(--muted);border-color:var(--border);cursor:not-allowed;transform:none}
+.btn-sm{font-size:0.75rem;padding:0.3rem 0.65rem}
+.connect-row{display:flex;gap:0.75rem;margin-top:1rem}
+.input{flex:1;font-family:var(--mono);font-size:0.85rem;padding:0.55rem 0.85rem;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;color:var(--text);outline:none;transition:border-color 0.15s}
+.input::placeholder{color:var(--muted)}
+.input:focus{border-color:var(--accent)}
+.status-pill{display:inline-flex;align-items:center;gap:0.4rem;font-size:0.75rem;font-weight:500;padding:0.25rem 0.7rem;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
+.status-pill.connected{color:var(--accent);border-color:var(--accent-glow);background:var(--accent-dim)}
+.status-pill.error{color:var(--danger);border-color:rgba(255,92,106,0.3);background:rgba(255,92,106,0.1)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.dot.blink{animation:blink 1s step-end infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+.drop-zone{border:2px dashed var(--border2);border-radius:12px;padding:2rem 1rem;text-align:center;cursor:pointer;transition:all 0.2s}
+.drop-zone:hover,.drop-zone.drag-over{border-color:var(--accent);background:var(--accent-dim)}
+.drop-zone.disabled{opacity:0.3;cursor:not-allowed;pointer-events:none}
+.drop-icon{font-size:2rem;margin-bottom:0.6rem;opacity:0.5}
+.drop-text{font-size:0.88rem;color:var(--muted)}
+.drop-text strong{color:var(--text)}
+#file-input{display:none}
+.queue-list{display:flex;flex-direction:column;gap:0.5rem;margin-top:1rem}
+.queue-item{display:flex;align-items:center;gap:0.75rem;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:0.7rem 0.9rem}
+.queue-item.sending{border-color:var(--accent-glow)}
+.queue-item.done{opacity:0.5}
+.queue-item.failed{border-color:rgba(255,92,106,0.3)}
+.qi-icon{font-size:1.2rem;flex-shrink:0}
+.qi-info{flex:1;min-width:0}
+.qi-name{font-size:0.82rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qi-meta{font-size:0.7rem;color:var(--muted);margin-top:2px}
+.qi-bar-bg{height:3px;background:var(--surface3);border-radius:999px;margin-top:5px;overflow:hidden}
+.qi-bar-fill{height:100%;background:var(--accent);border-radius:999px;width:0%;transition:width 0.15s}
+.qi-status{font-size:0.7rem;font-family:var(--mono);color:var(--muted);flex-shrink:0}
+.qi-status.ok{color:var(--accent)}
+.qi-status.err{color:var(--danger)}
+.send-row{display:flex;gap:0.75rem;margin-top:1rem}
+
+/* CHAT */
+.chat-box{display:flex;flex-direction:column;height:320px}
+.chat-messages{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:0.6rem;padding:0.5rem 0;margin-bottom:0.75rem}
+.chat-messages::-webkit-scrollbar{width:4px}
+.chat-messages::-webkit-scrollbar-track{background:transparent}
+.chat-messages::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+.msg{display:flex;flex-direction:column;max-width:80%}
+.msg.me{align-self:flex-end;align-items:flex-end}
+.msg.them{align-self:flex-start;align-items:flex-start}
+.msg-bubble{padding:0.5rem 0.85rem;border-radius:12px;font-size:0.85rem;line-height:1.5;word-break:break-word}
+.msg.me .msg-bubble{background:var(--accent);color:#000;border-bottom-right-radius:3px}
+.msg.them .msg-bubble{background:var(--surface2);color:var(--text);border-bottom-left-radius:3px}
+.msg-time{font-size:0.65rem;color:var(--muted);margin-top:3px;padding:0 4px}
+.chat-input-row{display:flex;gap:0.5rem}
+.chat-input{flex:1;font-family:var(--sans);font-size:0.85rem;padding:0.55rem 0.85rem;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;color:var(--text);outline:none;transition:border-color 0.15s}
+.chat-input:focus{border-color:var(--accent)}
+.chat-input::placeholder{color:var(--muted)}
+.chat-empty{text-align:center;color:var(--muted);font-size:0.8rem;margin:auto;padding:1.5rem 0}
+
+/* HISTORY */
+.history-list{display:flex;flex-direction:column;gap:0.5rem;max-height:280px;overflow-y:auto}
+.history-list::-webkit-scrollbar{width:4px}
+.history-list::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+.history-item{display:flex;align-items:center;gap:0.75rem;padding:0.65rem 0.85rem;background:var(--surface2);border-radius:10px;border:1px solid var(--border)}
+.hi-icon{font-size:1.1rem;flex-shrink:0}
+.hi-info{flex:1;min-width:0}
+.hi-name{font-size:0.8rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hi-meta{font-size:0.68rem;color:var(--muted);margin-top:2px}
+.hi-dir{font-size:0.68rem;padding:0.2rem 0.5rem;border-radius:4px;font-family:var(--mono)}
+.hi-dir.sent{background:var(--accent-dim);color:var(--accent)}
+.hi-dir.recv{background:rgba(91,156,246,0.12);color:var(--info)}
+.history-empty{text-align:center;color:var(--muted);font-size:0.8rem;padding:1.5rem 0}
+
+/* STATS */
+.stats-row{display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:1rem}
+.stat-box{background:var(--surface2);border-radius:10px;padding:0.75rem 1rem;border:1px solid var(--border)}
+.stat-label{font-size:0.68rem;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.08em}
+.stat-value{font-size:1.2rem;font-weight:600;margin-top:4px;color:var(--text)}
+
+/* LOG */
+.log{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:0.75rem 1rem;max-height:110px;overflow-y:auto;font-family:var(--mono);font-size:0.68rem;line-height:1.7;color:var(--muted)}
+.log::-webkit-scrollbar{width:4px}
+.log::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+.log-entry{color:var(--muted)}
+.log-entry.ok{color:var(--accent)}
+.log-entry.err{color:var(--danger)}
+.log-entry.info{color:var(--warn)}
+
+.hrow{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem}
+
+@media(max-width:700px){
+  .app{grid-template-columns:1fr}
+  .right{order:-1}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">file<span>drop</span> <span style="font-size:0.7rem;color:var(--muted);font-weight:400">v2</span></div>
+  <div class="tagline">Peer-to-peer · Bidirectional · No server · No limits</div>
+</header>
+
+<div class="app">
+
+  <!-- LEFT COLUMN -->
+  <div class="left">
+
+    <!-- YOUR ID + CONNECT -->
+    <div class="card">
+      <div class="card-label">Your Device ID</div>
+      <div class="id-box">
+        <div class="id-value loading" id="my-id">connecting...</div>
+        <button class="btn btn-sm" id="copy-btn" onclick="copyId()">Copy</button>
+      </div>
+      <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem">
+          <span style="font-size:0.8rem;color:var(--muted)">Connect to peer</span>
+          <div class="status-pill" id="status-pill"><div class="dot blink"></div><span id="status-text">waiting</span></div>
+        </div>
+        <div class="connect-row">
+          <input class="input" id="peer-id-input" type="text" placeholder="paste their id here" />
+          <button class="btn btn-primary" onclick="connectToPeer()">Connect</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SEND FILES -->
+    <div class="card">
+      <div class="card-label">Send Files</div>
+      <div class="drop-zone disabled" id="drop-zone"
+        onclick="document.getElementById('file-input').click()"
+        ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+        <div class="drop-icon">📂</div>
+        <div class="drop-text"><strong>Click to choose</strong> or drag & drop — multiple files ok</div>
+      </div>
+      <input type="file" id="file-input" multiple onchange="onFileSelect(event)" />
+      <div class="queue-list" id="queue-list"></div>
+      <div class="send-row">
+        <button class="btn btn-primary" id="send-btn" onclick="startQueue()" disabled style="flex:1;padding:0.7rem">
+          Send All
+        </button>
+        <button class="btn" id="clear-btn" onclick="clearQueue()" style="display:none">Clear</button>
+      </div>
+    </div>
+
+    <!-- LOG -->
+    <div class="card">
+      <div class="card-label">Activity Log</div>
+      <div class="log" id="log">
+        <div class="log-entry">» filedrop v2 ready</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT COLUMN -->
+  <div class="right">
+
+    <!-- CHAT -->
+    <div class="card">
+      <div class="hrow">
+        <div class="card-label" style="margin-bottom:0">Chat</div>
+        <span style="font-size:0.7rem;color:var(--muted)" id="chat-status">connect to chat</span>
+      </div>
+      <div class="chat-box">
+        <div class="chat-messages" id="chat-messages">
+          <div class="chat-empty">No messages yet</div>
+        </div>
+        <div class="chat-input-row">
+          <input class="chat-input" id="chat-input" type="text" placeholder="Type a message..." disabled onkeydown="onChatKey(event)" />
+          <button class="btn btn-primary btn-sm" id="chat-send" onclick="sendChat()" disabled>Send</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TRANSFER HISTORY -->
+    <div class="card">
+      <div class="hrow">
+        <div class="card-label" style="margin-bottom:0">Transfer History</div>
+        <button class="btn btn-sm" onclick="clearHistory()" style="font-size:0.68rem;padding:0.2rem 0.5rem">Clear</button>
+      </div>
+      <div class="stats-row">
+        <div class="stat-box">
+          <div class="stat-label">Sent</div>
+          <div class="stat-value" id="stat-sent">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Received</div>
+          <div class="stat-value" id="stat-recv">0</div>
+        </div>
+      </div>
+      <div class="history-list" id="history-list">
+        <div class="history-empty">No transfers yet</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const CHUNK_SIZE = 64 * 1024;
+let peer, conn;
+let fileQueue = [];
+let isSending = false;
+let currentReceive = null;
+let history = [];
+let statSent = 0, statRecv = 0;
+let sendStart = 0;
+
+// ── PEER INIT ──
+function initPeer() {
+  peer = new Peer({ host: '0.peerjs.com', port: 443, path: '/', secure: true });
+  peer.on('open', id => {
+    const el = document.getElementById('my-id');
+    el.textContent = id;
+    el.classList.remove('loading');
+    log('your id: ' + id, 'ok');
+  });
+  peer.on('connection', c => {
+    conn = c;
+    setupConn();
+    log('incoming connection from ' + c.peer, 'info');
+  });
+  peer.on('error', err => {
+    log('peer error: ' + err.message, 'err');
+    setStatus('error', 'error');
+  });
+}
+
+function connectToPeer() {
+  const id = document.getElementById('peer-id-input').value.trim();
+  if (!id || !peer) return;
+  conn = peer.connect(id, { reliable: true });
+  log('connecting to ' + id + '...', 'info');
+  setupConn();
+}
+
+function setupConn() {
+  conn.on('open', () => {
+    log('connected to ' + conn.peer, 'ok');
+    setStatus('connected', 'connected');
+    document.getElementById('drop-zone').classList.remove('disabled');
+    document.getElementById('chat-input').disabled = false;
+    document.getElementById('chat-send').disabled = false;
+    document.getElementById('chat-status').textContent = 'connected';
+    updateSendBtn();
+  });
+  conn.on('data', handleData);
+  conn.on('close', () => {
+    log('connection closed', 'err');
+    setStatus('disconnected', 'error');
+    document.getElementById('drop-zone').classList.add('disabled');
+    document.getElementById('chat-input').disabled = true;
+    document.getElementById('chat-send').disabled = true;
+    document.getElementById('chat-status').textContent = 'disconnected';
+    document.getElementById('send-btn').disabled = true;
+  });
+  conn.on('error', err => log('conn error: ' + err.message, 'err'));
+}
+
+// ── DATA HANDLER ──
+function handleData(data) {
+  if (data.type === 'chat') {
+    appendChat(data.text, 'them');
+    return;
+  }
+  if (data.type === 'meta') {
+    currentReceive = { name: data.name, size: data.size, chunks: [], received: 0, start: Date.now() };
+    log('receiving: ' + data.name + ' (' + fmtSize(data.size) + ')', 'info');
+    return;
+  }
+  if (data.type === 'chunk') {
+    if (!currentReceive) return;
+    currentReceive.chunks.push(data.buf);
+    currentReceive.received += data.buf.byteLength;
+    return;
+  }
+  if (data.type === 'done') {
+    if (!currentReceive) return;
+    const r = currentReceive;
+    const blob = new Blob(r.chunks);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = r.name; a.click();
+    URL.revokeObjectURL(url);
+    const elapsed = ((Date.now() - r.start) / 1000).toFixed(1);
+    log('received ' + r.name + ' in ' + elapsed + 's', 'ok');
+    addHistory(r.name, r.size, 'recv', elapsed);
+    statRecv++;
+    document.getElementById('stat-recv').textContent = statRecv;
+    currentReceive = null;
+    return;
+  }
+}
+
+// ── FILE QUEUE ──
+function onFileSelect(e) {
+  addFilesToQueue([...e.target.files]);
+  e.target.value = '';
+}
+function onDragOver(e) { e.preventDefault(); document.getElementById('drop-zone').classList.add('drag-over'); }
+function onDragLeave() { document.getElementById('drop-zone').classList.remove('drag-over'); }
+function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('drag-over');
+  addFilesToQueue([...e.dataTransfer.files]);
+}
+
+function addFilesToQueue(files) {
+  files.forEach(f => {
+    const item = { file: f, status: 'pending', progress: 0, id: 'qi_' + Date.now() + Math.random() };
+    fileQueue.push(item);
+    renderQueueItem(item);
+  });
+  updateSendBtn();
+  document.getElementById('clear-btn').style.display = fileQueue.length ? '' : 'none';
+}
+
+function renderQueueItem(item) {
+  const list = document.getElementById('queue-list');
+  const el = document.createElement('div');
+  el.className = 'queue-item';
+  el.id = item.id;
+  el.innerHTML = `
+    <div class="qi-icon">${fileEmoji(item.file.name)}</div>
+    <div class="qi-info">
+      <div class="qi-name">${item.file.name}</div>
+      <div class="qi-meta">${fmtSize(item.file.size)}</div>
+      <div class="qi-bar-bg" id="bar_${item.id}"><div class="qi-bar-fill" id="fill_${item.id}"></div></div>
+    </div>
+    <div class="qi-status" id="sts_${item.id}">queued</div>
+    <button class="btn btn-sm" onclick="removeFromQueue('${item.id}')" style="padding:0.2rem 0.4rem;font-size:0.7rem">✕</button>
+  `;
+  list.appendChild(el);
+}
+
+function removeFromQueue(id) {
+  fileQueue = fileQueue.filter(i => i.id !== id);
+  const el = document.getElementById(id);
+  if (el) el.remove();
+  updateSendBtn();
+  if (!fileQueue.length) document.getElementById('clear-btn').style.display = 'none';
+}
+
+function clearQueue() {
+  fileQueue = [];
+  document.getElementById('queue-list').innerHTML = '';
+  document.getElementById('clear-btn').style.display = 'none';
+  updateSendBtn();
+}
+
+function updateSendBtn() {
+  const ready = conn && conn.open && fileQueue.filter(i => i.status === 'pending').length > 0 && !isSending;
+  document.getElementById('send-btn').disabled = !ready;
+}
+
+async function startQueue() {
+  if (isSending) return;
+  isSending = true;
+  updateSendBtn();
+  for (const item of fileQueue) {
+    if (item.status !== 'pending') continue;
+    await sendQueueItem(item);
+  }
+  isSending = false;
+  updateSendBtn();
+}
+
+function sendQueueItem(item) {
+  return new Promise(async (resolve) => {
+    item.status = 'sending';
+    const el = document.getElementById(item.id);
+    if (el) el.classList.add('sending');
+    setQueueStatus(item.id, '0%');
+    sendStart = Date.now();
+    log('sending ' + item.file.name + '...', 'info');
+
+    conn.send({ type: 'meta', name: item.file.name, size: item.file.size });
+
+    const buffer = await item.file.arrayBuffer();
+    let offset = 0;
+
+    function sendNext() {
+      if (offset >= buffer.byteLength) {
+        conn.send({ type: 'done' });
+        const elapsed = ((Date.now() - sendStart) / 1000).toFixed(1);
+        log('sent ' + item.file.name + ' in ' + elapsed + 's', 'ok');
+        item.status = 'done';
+        if (el) { el.classList.remove('sending'); el.classList.add('done'); }
+        setQueueStatus(item.id, '✓', 'ok');
+        document.getElementById('fill_' + item.id).style.width = '100%';
+        addHistory(item.file.name, item.file.size, 'sent', elapsed);
+        statSent++;
+        document.getElementById('stat-sent').textContent = statSent;
+        resolve();
+        return;
+      }
+      const chunk = buffer.slice(offset, offset + CHUNK_SIZE);
+      conn.send({ type: 'chunk', buf: chunk });
+      offset += chunk.byteLength;
+      const pct = Math.round((offset / buffer.byteLength) * 100);
+      document.getElementById('fill_' + item.id).style.width = pct + '%';
+      setQueueStatus(item.id, pct + '%');
+      setTimeout(sendNext, 0);
+    }
+    sendNext();
+  });
+}
+
+function setQueueStatus(id, text, cls = '') {
+  const el = document.getElementById('sts_' + id);
+  if (el) { el.textContent = text; el.className = 'qi-status ' + cls; }
+}
+
+// ── CHAT ──
+function onChatKey(e) { if (e.key === 'Enter') sendChat(); }
+
+function sendChat() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text || !conn || !conn.open) return;
+  conn.send({ type: 'chat', text });
+  appendChat(text, 'me');
+  input.value = '';
+}
+
+function appendChat(text, side) {
+  const box = document.getElementById('chat-messages');
+  const empty = box.querySelector('.chat-empty');
+  if (empty) empty.remove();
+  const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const msg = document.createElement('div');
+  msg.className = 'msg ' + side;
+  msg.innerHTML = `<div class="msg-bubble">${escHtml(text)}</div><div class="msg-time">${now}</div>`;
+  box.appendChild(msg);
+  box.scrollTop = box.scrollHeight;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── HISTORY ──
+function addHistory(name, size, dir, elapsed) {
+  const item = { name, size, dir, elapsed, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+  history.unshift(item);
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = document.getElementById('history-list');
+  if (!history.length) { list.innerHTML = '<div class="history-empty">No transfers yet</div>'; return; }
+  list.innerHTML = history.map(h => `
+    <div class="history-item">
+      <div class="hi-icon">${fileEmoji(h.name)}</div>
+      <div class="hi-info">
+        <div class="hi-name">${escHtml(h.name)}</div>
+        <div class="hi-meta">${fmtSize(h.size)} · ${h.elapsed}s · ${h.time}</div>
+      </div>
+      <div class="hi-dir ${h.dir}">${h.dir === 'sent' ? '↑ sent' : '↓ recv'}</div>
+    </div>
+  `).join('');
+}
+
+function clearHistory() {
+  history = [];
+  statSent = 0; statRecv = 0;
+  document.getElementById('stat-sent').textContent = '0';
+  document.getElementById('stat-recv').textContent = '0';
+  renderHistory();
+}
+
+// ── UTILS ──
+function log(msg, type = '') {
+  const el = document.getElementById('log');
+  const d = document.createElement('div');
+  d.className = 'log-entry ' + type;
+  d.textContent = '» ' + msg;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setStatus(text, type = '') {
+  const pill = document.getElementById('status-pill');
+  const span = document.getElementById('status-text');
+  pill.className = 'status-pill ' + type;
+  span.textContent = text;
+  pill.querySelector('.dot').className = 'dot' + (type === '' ? ' blink' : '');
+}
+
+function copyId() {
+  const id = document.getElementById('my-id').textContent;
+  if (id === 'connecting...') return;
+  navigator.clipboard.writeText(id).then(() => {
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 1500);
+  });
+}
+
+function fmtSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+  return (b/1073741824).toFixed(2) + ' GB';
+}
+
+function fileEmoji(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  const map = { pdf:'📄', doc:'📝', docx:'📝', xls:'📊', xlsx:'📊', ppt:'📑', pptx:'📑',
+    jpg:'🖼️', jpeg:'🖼️', png:'🖼️', gif:'🖼️', svg:'🖼️', webp:'🖼️',
+    mp4:'🎬', mov:'🎬', avi:'🎬', mkv:'🎬', mp3:'🎵', wav:'🎵', flac:'🎵',
+    zip:'🗜️', rar:'🗜️', gz:'🗜️', tar:'🗜️', py:'🐍', js:'📜', ts:'📜',
+    html:'🌐', css:'🎨', json:'📋', csv:'📋', txt:'📃' };
+  return map[ext] || '📁';
+}
+
+initPeer();
+</script>
+</body>
+</html>
